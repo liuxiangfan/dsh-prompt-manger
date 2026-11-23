@@ -76,7 +76,7 @@ dsh plugin --profile web add ./dsh-prompt-manager-0.1.0.tgz
 
 ### 在界面里装
 
-DSH 的「插件」页 → 安装 → 选本地目录，指向克隆下来的文件夹。等价于上面第二种。
+DSH 的「插件」页 → 安装 → 选本地目录，指向克隆下来的文件夹。
 
 ### 让 Agent 帮你装
 
@@ -185,4 +185,4 @@ const cwd = context.agent?.session?.header?.cwd
 
 ## 许可证
 
-[MIT](LICENSE)。拿去改、拿去发、拿去卖都行，保留版权声明和许可声明就成。
+[MIT](LICENSE)
