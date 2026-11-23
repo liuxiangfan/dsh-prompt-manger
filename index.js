@@ -61,6 +61,8 @@ export const Config = z?.object
         .description('全局提示词库，JSON 数组：[{ "name": "编码", "text": "……" }]'),
       projects: z.string().default('{}').volatile()
         .description('项目提示词库，JSON 对象：{ "D:/某个项目": { "templates": [...], "active": "名字" } }'),
+      workspaces: z.string().default('[]').volatile()
+        .description('见过的工作目录，JSON 数组，最新在前。设置页用它列出「已有工作区」，插件自动收集。'),
       order: z.number().default(DEFAULT_ORDER)
         .description('插入位置，越大越靠后。10300 = 系统提示词最下面。'),
       complete: z.boolean().default(false)
@@ -175,6 +177,45 @@ export function parseProjects(raw) {
  * 按会话工作目录挑项目：同路径或位于其子目录都算，取最长（最具体）的那个。
  * 没命中返回 undefined，调用方退回全局库。
  */
+/**
+ * 见过的工作目录：设置页拿它当「已有工作区」下拉。
+ * 保留用户原本的大小写与分隔符，只按归一化结果去重。
+ */
+export function parseWorkspaces(raw) {
+  let plain
+  if (Array.isArray(raw)) {
+    plain = raw
+  } else {
+    try {
+      const value = JSON.parse(asText(raw, '[]').trim() || '[]')
+      plain = Array.isArray(value) ? value : []
+    } catch {
+      plain = []
+    }
+  }
+  const seen = new Set()
+  const out = []
+  for (const item of plain) {
+    if (typeof item !== 'string') continue
+    const path = item.trim()
+    const key = normalizePath(path)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(path)
+    if (out.length >= 40) break
+  }
+  return out
+}
+
+/** 把一条目录挪到最前，超出 40 条砍尾。 */
+export function rememberWorkspace(list, cwd) {
+  const path = typeof cwd === 'string' ? cwd.trim() : ''
+  const key = normalizePath(path)
+  if (!key) return list
+  const rest = list.filter((item) => normalizePath(item) !== key)
+  return [path, ...rest].slice(0, 40)
+}
+
 export function pickProject(list, cwd) {
   const here = normalizePath(cwd)
   if (here === '') return undefined
@@ -233,6 +274,7 @@ export function apply(ctx, config) {
     active: asText(options.active),
     templates: asText(options.templates, EMPTY_LIBRARY),
     projects: asText(options.projects, '{}'),
+    workspaces: asText(options.workspaces, '[]'),
     order: asNumber(options.order, DEFAULT_ORDER),
     complete: asBool(options.complete, false),
   })
@@ -244,10 +286,19 @@ export function apply(ctx, config) {
    * 每回合组装时求值。空串会被组装流程丢掉，等于不注入。
    * 组装上下文里带着 agent，agent 带着 session.header.cwd——项目提示词就靠它归属。
    */
+  /** 由 save() 之后的代码填充；这里先占位，因为 sectionText 定义在 save 之前。 */
+  let noteWorkspace = () => {}
+
   const sectionText = (context) => {
     const state = effective()
     if (state.enabled === false) return ''
-    const project = pickProject(parseProjects(state.projects), cwdOf(context))
+    const cwd = cwdOf(context)
+    try {
+      noteWorkspace(cwd)
+    } catch {
+      /* 收集目录只是顺手，绝不影响注入 */
+    }
+    const project = pickProject(parseProjects(state.projects), cwd)
     if (project) return pickTemplate(project.templates, project.active).text
     return pickTemplate(parseTemplates(state.templates), state.active).text
   }
@@ -298,6 +349,24 @@ export function apply(ctx, config) {
       logger?.warn?.('[dsh-prompt-manager] 写入配置失败: ' + String(error?.message ?? error))
       return false
     }
+  }
+
+  /**
+   * 收集会话的工作目录，设置页据此列出「已有工作区」。
+   * 每回合注入时调用：只有新目录才动，落盘节流 5 秒，失败静默。
+   */
+  let lastSeenAt = 0
+  noteWorkspace = (cwd) => {
+    if (!cwd) return
+    const current = effective()
+    const known = parseWorkspaces(current.workspaces)
+    if (known.some((item) => normalizePath(item) === normalizePath(cwd))) return
+    const next = rememberWorkspace(known, cwd)
+    override = { ...current, workspaces: JSON.stringify(next) }
+    const now = Date.now()
+    if (now - lastSeenAt < 5000) return
+    lastSeenAt = now
+    save({ workspaces: JSON.stringify(next) }).catch(() => {})
   }
 
   const describe = () => {

@@ -80,6 +80,28 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    /** 见过的工作目录：插件在注入时自动收集，这里只负责读。 */
+    function pathsOf(raw) {
+      let value
+      try {
+        value = JSON.parse(String(raw ?? '[]'))
+      } catch {
+        return []
+      }
+      if (!Array.isArray(value)) return []
+      const seen = new Set()
+      const out = []
+      for (const item of value) {
+        if (typeof item !== 'string') continue
+        const path = item.trim()
+        const key = path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '').toLowerCase()
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        out.push(path)
+      }
+      return out
+    }
+
     const dumpList = (list) => JSON.stringify(list.map((item) => ({ name: item.name, text: item.text })))
     const dumpMap = (map) => JSON.stringify(map)
 
@@ -101,40 +123,44 @@ window.__ModuleLoader__.load({
     /* ---------------- 样式 ---------------- */
 
     const CSS = `
-.pm { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 24px; color: var(--dsw-alias-text-primary, inherit); }
+.pm { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 24px; color: inherit; }
 .pm-head { display: flex; align-items: center; gap: 10px; }
 .pm-title { font-size: 15px; font-weight: 600; margin: 0; }
-.pm-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
-.pm-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.2)); }
-.pm-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; font: inherit; font-size: 13px; cursor: pointer; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
-.pm-tab.is-on { color: var(--dsw-alias-text-primary, inherit); border-bottom-color: var(--dsw-alias-brand-primary, #4d6bfe); font-weight: 600; }
-.pm-note { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); margin: 0; }
+.pm-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: inherit; opacity: .75; }
+.pm-tabs { display: flex; gap: 4px; border-bottom: 1px solid rgba(127,127,127,.28); }
+.pm-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; opacity: .6; }
+.pm-tab.is-on { opacity: 1; border-bottom-color: currentColor; font-weight: 600; }
+.pm-note { font-size: 12px; line-height: 1.6; color: inherit; opacity: .7; margin: 0; }
 .pm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pm-grow { flex: 1 1 auto; }
-.pm-btn { appearance: none; font: inherit; font-size: 12px; line-height: 1; padding: 7px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); background: var(--dsw-alias-bg-base, transparent); color: var(--dsw-alias-text-primary, inherit); }
-.pm-btn:hover { border-color: var(--dsw-alias-brand-primary, #4d6bfe); }
-.pm-btn.primary { background: var(--dsw-alias-brand-primary, #4d6bfe); border-color: transparent; color: #fff; }
-.pm-btn.ghost { border-color: transparent; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); padding: 6px 8px; }
-.pm-btn.ghost:hover { color: var(--dsw-alias-text-primary, inherit); }
-.pm-input, .pm-area { font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); background: var(--dsw-alias-bg-base, transparent); color: inherit; }
+.pm-btn { appearance: none; font: inherit; font-size: 12px; line-height: 1; padding: 7px 12px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(127,127,127,.45); background: transparent; color: inherit; }
+.pm-btn:hover { border-color: currentColor; }
+.pm-btn.primary { background: rgba(88,116,255,.16); border-color: rgba(88,116,255,.72); color: inherit; font-weight: 600; }
+.pm-btn.primary:hover { background: rgba(88,116,255,.28); }
+.pm-btn.ghost { border-color: transparent; background: transparent; color: inherit; opacity: .62; padding: 6px 8px; }
+.pm-btn.ghost:hover { opacity: 1; }
+.pm-btn:disabled { opacity: .4; cursor: default; }
+.pm-input, .pm-area { font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(127,127,127,.45); background: transparent; color: inherit; }
 .pm-area { min-height: 190px; resize: vertical; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-.pm-input:focus, .pm-area:focus { outline: none; border-color: var(--dsw-alias-brand-primary, #4d6bfe); }
+.pm-input:focus, .pm-area:focus { outline: none; border-color: rgba(88,116,255,.8); }
 .pm-list { display: flex; flex-direction: column; gap: 8px; }
-.pm-card { border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.22)); border-radius: 8px; padding: 10px 12px; background: var(--dsw-alias-bg-elevated, rgba(127,127,127,.05)); }
-.pm-card.is-active { border-color: var(--dsw-alias-brand-primary, #4d6bfe); box-shadow: 0 0 0 1px var(--dsw-alias-brand-primary, #4d6bfe) inset; }
+.pm-card { border: 1px solid rgba(127,127,127,.3); border-radius: 8px; padding: 10px 12px; background: rgba(127,127,127,.06); }
+.pm-card.is-active { border-color: rgba(88,116,255,.85); box-shadow: 0 0 0 1px rgba(88,116,255,.55) inset; }
 .pm-card-head { display: flex; align-items: center; gap: 8px; }
 .pm-name { font-size: 13px; font-weight: 600; }
-.pm-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--dsw-alias-bg-success, rgba(40,167,69,.14)); color: var(--dsw-alias-text-success, #2f9e44); }
-.pm-preview { font-size: 12px; line-height: 1.6; margin: 6px 0 8px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(40,167,69,.2); border: 1px solid rgba(40,167,69,.45); color: inherit; }
+.pm-preview { font-size: 12px; line-height: 1.6; margin: 6px 0 8px; color: inherit; opacity: .68; }
 .pm-foot { display: flex; align-items: center; gap: 6px; }
 .pm-foot .pm-grow { flex: 1; }
-.pm-full { margin: 10px 0 0; padding: 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; border-radius: 6px; background: var(--dsw-alias-bg-base, rgba(127,127,127,.08)); }
+.pm-full { margin: 10px 0 0; padding: 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; border-radius: 6px; background: rgba(127,127,127,.1); color: inherit; }
 .pm-group { display: flex; flex-direction: column; gap: 8px; }
 .pm-group-head { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
 .pm-group-path { font-size: 12px; font-weight: 600; }
-.pm-group-meta { font-size: 11px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
-.pm-empty { font-size: 12px; padding: 18px 12px; text-align: center; border: 1px dashed var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); border-radius: 8px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
-.pm-warn { font-size: 12px; color: var(--dsw-alias-text-warning, #b26a00); }
+.pm-group-meta { font-size: 11px; color: inherit; opacity: .62; }
+.pm-empty { font-size: 12px; padding: 18px 12px; text-align: center; border: 1px dashed rgba(127,127,127,.45); border-radius: 8px; color: inherit; opacity: .7; }
+.pm-warn { font-size: 12px; color: rgba(214,138,0,.95); }
+.pm-select { font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 6px; border: 1px solid rgba(127,127,127,.45); background: transparent; color: inherit; max-width: 100%; }
+.pm-chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(127,127,127,.4); color: inherit; opacity: .8; }
 `
 
     /* ---------------- 卡片 ---------------- */
@@ -219,6 +245,7 @@ window.__ModuleLoader__.load({
       const list = useMemo(() => listOf(value.templates), [value.templates])
       const projects = useMemo(() => mapOf(value.projects), [value.projects])
       const projectPaths = useMemo(() => Object.keys(projects).sort((a, b) => a.localeCompare(b)), [projects])
+      const workspaces = useMemo(() => pathsOf(value.workspaces), [value.workspaces])
 
       if (!live) {
         return h('div', { className: 'pm' },
@@ -491,13 +518,26 @@ window.__ModuleLoader__.load({
           )
         })
 
+        const reusable = workspaces.filter((path) => !projects[path])
+
         body = h(React.Fragment, null,
           h('p', { className: 'pm-note' }, '项目提示词只在工作目录落在这个项目里的会话生效，优先于全局。'),
           h('div', { className: 'pm-bar' },
+            reusable.length
+              ? h('select', {
+                  className: 'pm-select',
+                  title: '插件在注入时收集到的工作目录',
+                  value: reusable.includes(newPath) ? newPath : '',
+                  onChange: (event) => { if (event.target.value) setNewPath(event.target.value) },
+                },
+                h('option', { value: '' }, '选择已有工作区…'),
+                reusable.map((path) => h('option', { key: path, value: path }, path)),
+              )
+              : h('span', { className: 'pm-chip' }, '没见过工作区——先开一个会话，这里就会出现'),
             h('input', {
               className: 'pm-input',
-              style: { flex: '1 1 260px', width: 'auto' },
-              placeholder: '项目根目录，例如 D:/code/site',
+              style: { flex: '1 1 220px', width: 'auto' },
+              placeholder: '或手填项目根目录，例如 D:/code/site',
               value: newPath,
               onChange: (event) => setNewPath(event.target.value),
               onKeyDown: (event) => { if (event.key === 'Enter') addProject() },
@@ -506,7 +546,7 @@ window.__ModuleLoader__.load({
           ),
           groups.length
             ? h('div', { className: 'pm-list' }, groups)
-            : h('div', { className: 'pm-empty' }, '还没有项目分组。上面填一个目录，再点「+ 新建分组」。'),
+            : h('div', { className: 'pm-empty' }, '还没有项目分组。从上面选一个工作区（或手填目录），再点「+ 新建分组」。'),
         )
       }
 
