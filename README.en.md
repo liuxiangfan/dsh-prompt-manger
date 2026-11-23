@@ -8,6 +8,7 @@
 
 [![DSH Web Plugin](https://img.shields.io/badge/DSH-Web%20Plugin-0f766e.svg)](https://github.com/liuxiangfan/dsh-prompt-manger)
 [![version](https://img.shields.io/badge/version-0.1.0-2563eb.svg)](https://github.com/liuxiangfan/dsh-prompt-manger/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-22c55e.svg)](LICENSE)
 
 </div>
 
@@ -32,15 +33,47 @@ This plugin splits them into a library of independent templates: they coexist, a
 
 ## Install
 
-Requires a working DeepSeek Harness install. Commands below use the `web` profile.
+Requires a working DeepSeek Harness. Commands below use the `web` profile.
 
-```powershell
-git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
+The package declares `dsh.bundle`, so `dsh plugin add` wires it into the profile for you. It is plain JavaScript — no build step — which is exactly why it installs straight from GitHub (a git install fetches sources and runs no `build` script).
+
+### From GitHub
+
+```bash
+dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger
 ```
 
-Then open DSH's Plugins page → Install → pick the cloned folder. Restart DSH and "提示词管理" shows up in settings.
+Pin a commit if you want reproducibility:
 
-No build step: `index.js` and `client.js` are the runnable artifacts.
+```bash
+dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger#<sha>
+```
+
+No global `dsh`? Prefix it with `npx @deepseek-ai/dsh`.
+
+### From a local checkout
+
+pnpm links the directory rather than copying it, so edits take effect immediately:
+
+```bash
+git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
+dsh plugin --profile web add ./dsh-prompt-manger
+```
+
+### From a tarball
+
+```bash
+git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
+cd dsh-prompt-manger
+pnpm pack
+dsh plugin --profile web add ./dsh-prompt-manager-0.1.0.tgz
+```
+
+### From the UI
+
+DSH's Plugins page → Install → pick the cloned folder. Same as the local checkout above.
+
+Restart DSH afterwards — the host half mounts at boot only.
 
 ## Usage
 
@@ -96,4 +129,4 @@ Open an [issue](https://github.com/liuxiangfan/dsh-prompt-manger/issues). Includ
 
 ## License
 
-Not specified yet. Ask in Issues before redistributing.
+[MIT](LICENSE).

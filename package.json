@@ -1,10 +1,26 @@
 {
   "name": "dsh-prompt-manager",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "index.js",
-  "description": "Switchable system-prompt template library for DeepSeek Harness",
+  "description": "Switchable system-prompt template library for DeepSeek Harness: many prompts, one global and one per workspace",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liuxiangfan/dsh-prompt-manger.git"
+  },
+  "homepage": "https://github.com/liuxiangfan/dsh-prompt-manger#readme",
+  "bugs": {
+    "url": "https://github.com/liuxiangfan/dsh-prompt-manger/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "system-prompt",
+    "prompt",
+    "prompt-manager"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

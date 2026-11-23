@@ -332,7 +332,11 @@ export function apply(ctx, config) {
       /* 收集目录只是顺手，绝不影响注入 */
     }
     const project = pickProject(parseProjects(state.projects), cwd)
-    if (project) return pickTemplate(project.templates, project.active).text
+    if (project) {
+      const own = pickTemplate(project.templates, project.active).text
+      // 分组建了但还没配模板时退回全局：空分组不该把整段人格清空。
+      if (own) return own
+    }
     return pickTemplate(parseTemplates(state.templates), state.active).text
   }
 

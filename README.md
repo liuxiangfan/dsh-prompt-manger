@@ -9,6 +9,7 @@
 [![DSH Web Plugin](https://img.shields.io/badge/DSH-Web%20Plugin-0f766e.svg)](https://github.com/liuxiangfan/dsh-prompt-manger)
 [![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-0.1.0-2563eb.svg)](https://github.com/liuxiangfan/dsh-prompt-manger/releases)
 [![注入位置](https://img.shields.io/badge/order-10300-7c3aed.svg)](#工作原理)
+[![许可证：MIT](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-MIT-22c55e.svg)](LICENSE)
 
 </div>
 
@@ -33,26 +34,60 @@
 
 ## 安装
 
-需要已安装并能正常运行 DeepSeek Harness。以下说明使用 `web` profile，请按实际环境替换。
+需要先有能跑起来的 DeepSeek Harness。命令里的 `web` 是你的 profile 名，按实际情况替换。
 
-### 让 Agent 帮你安装
+插件就是一个 bundle：`package.json` 里声明了 `dsh.bundle`，装进 profile 后会自动挂上，不用手改 `cordis.patch.yml`。纯 JS，没有构建步骤 —— 这也是它能直接从 GitHub 装的原因（git 安装只拉源码、不跑 `build`，带编译步骤的插件会在这里翻车）。
 
-把这段话发给能够操作本机终端的 Agent：
+### 从 GitHub 装
+
+```bash
+dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger
+```
+
+想锁死版本，带上 commit：
+
+```bash
+dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger#<sha>
+```
+
+机器上没有全局 `dsh` 的话，套一层 `npx`：
+
+```bash
+npx @deepseek-ai/dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger
+```
+
+### 从本地目录装
+
+克隆下来直接指目录。pnpm 做的是软链不是拷贝，改代码即时生效：
+
+```bash
+git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
+dsh plugin --profile web add ./dsh-prompt-manger
+```
+
+### 从 tarball 装
+
+```bash
+git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
+cd dsh-prompt-manger
+pnpm pack
+dsh plugin --profile web add ./dsh-prompt-manager-0.1.0.tgz
+```
+
+### 在界面里装
+
+DSH 的「插件」页 → 安装 → 选本地目录，指向克隆下来的文件夹。等价于上面第二种。
+
+### 让 Agent 帮你装
+
+把这段话发给能操作本机终端的 Agent：
 
 ```text
-请把这个目录作为 DSH 插件装到我的 web profile：<仓库克隆到的绝对路径>
+请把 DSH 插件装到我的 web profile：dsh plugin --profile web add github:liuxiangfan/dsh-prompt-manger
 装好后确认它出现在插件列表里，并告诉我怎么重新加载界面。
 ```
 
-### 手动安装
-
-```powershell
-git clone https://github.com/liuxiangfan/dsh-prompt-manger.git
-```
-
-然后打开 DSH 的「插件」页 → 安装 → 选择本地目录，指向克隆下来的文件夹。装好之后重启 DSH，设置里会出现「提示词管理」。
-
-这个插件是纯 JS，没有构建步骤，`index.js` 和 `client.js` 就是能直接跑的东西。
+装完重启 DSH —— 宿主那一半只在 boot 时挂载。设置里出现「提示词管理」就成了。
 
 ## 快速上手
 
@@ -150,4 +185,4 @@ const cwd = context.agent?.session?.header?.cwd
 
 ## 许可证
 
-暂未指定。想拿去改、拿去分发，先在 Issues 里问一声。
+[MIT](LICENSE)。拿去改、拿去发、拿去卖都行，保留版权声明和许可声明就成。
