@@ -5,6 +5,9 @@
   "main": "index.js",
   "description": "Switchable system-prompt template library for DeepSeek Harness: many prompts, one global and one per workspace",
   "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/liuxiangfan/dsh-prompt-manger.git"
