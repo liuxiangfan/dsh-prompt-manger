@@ -13,6 +13,9 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'prompt-manager'
+    const REPO_URL = 'https://github.com/liuxiangfan/dsh-prompt-manger'
+    const GITHUB_MARK = 'M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.5-1.8-1.5-1.8-1.2-.8.1-.8.1-.8 1.3.1 2 1.3 2 1.3 1.1 1.9 3 1.4 3.7 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3z'
+    const ISSUE_MARK = 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
     const PREVIEW = 150
 
     /* ---------------- 配置读写 ---------------- */
@@ -124,8 +127,13 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 .pm { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 24px; color: inherit; }
-.pm-head { display: flex; align-items: center; gap: 10px; }
+.pm-head { display: flex; flex-direction: column; gap: 8px; }
+.pm-head-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pm-title { font-size: 15px; font-weight: 600; margin: 0; }
+.pm-link { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1; padding: 5px 10px; border-radius: 999px; border: 1px solid rgba(127,127,127,.45); color: inherit; text-decoration: none; opacity: .85; }
+.pm-link:hover { opacity: 1; border-color: currentColor; }
+.pm-link span { white-space: nowrap; }
+.pm-intro { font-size: 12px; line-height: 1.65; opacity: .7; margin: 0; }
 .pm-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: inherit; opacity: .75; }
 .pm-tabs { display: flex; gap: 4px; border-bottom: 1px solid rgba(127,127,127,.28); }
 .pm-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; opacity: .6; }
@@ -374,20 +382,42 @@ window.__ModuleLoader__.load({
 
       /* ----- 渲染 ----- */
 
+      const icon = (d) => h('svg', {
+        viewBox: '0 0 24 24',
+        width: 14,
+        height: 14,
+        fill: 'currentColor',
+        'aria-hidden': 'true',
+      }, h('path', { d }))
+
+      const repoLink = (href, label, d) => h('a', {
+        className: 'pm-link',
+        href,
+        target: '_blank',
+        rel: 'noreferrer noopener',
+        title: href,
+      }, icon(d), h('span', null, label))
+
       const head = h('div', { className: 'pm-head' },
-        h('h3', { className: 'pm-title' }, '提示词管理'),
-        h('label', { className: 'pm-switch' },
-          h('input', {
-            type: 'checkbox',
-            checked: enabled,
-            onChange: (event) => {
-              if (!guard()) return
-              setKey(live, 'enabled', event.target.checked)
-              rerender()
-            },
-          }),
-          enabled ? '注入中' : '已停用',
+        h('div', { className: 'pm-head-row' },
+          h('h3', { className: 'pm-title' }, '提示词管理'),
+          repoLink(REPO_URL, 'GitHub', GITHUB_MARK),
+          repoLink(REPO_URL + '/issues', '问题反馈', ISSUE_MARK),
+          h('span', { className: 'pm-grow' }),
+          h('label', { className: 'pm-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: enabled,
+              onChange: (event) => {
+                if (!guard()) return
+                setKey(live, 'enabled', event.target.checked)
+                rerender()
+              },
+            }),
+            enabled ? '注入中' : '已停用',
+          ),
         ),
+        h('p', { className: 'pm-intro' }, '多套系统提示词：全局一份，每个工作区各自一份。点「应用」换过去，下一回合生效。'),
       )
 
       const tabs = h('div', { className: 'pm-tabs' },
