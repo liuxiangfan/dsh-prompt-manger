@@ -424,15 +424,28 @@ window.__ModuleLoader__.load({
     /** 槽位渲染器没把 inject props 传下来时的兜底。 */
     var currentForm = null;
 
+    /** configForms 可能晚于本模块就绪，取不到就留空，渲染时再试一次。 */
+    function readForm(ctx) {
+      try {
+        return ctx.configForms.get(NS) || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
     function apply(ctx) {
-      currentForm = ctx.configForms.get(NS);
+      currentForm = readForm(ctx);
       ctx.slots.inject('settings.section', function () {
         return ctx.slots.register({
           name: 'settings.section',
           id: 'prompt-manager',
           order: 61,
           label: function () { return '提示词管理'; },
-          inject: function () { return { form: currentForm }; },
+          // 每次渲染都重取：设置页打开得比插件晚时，第一次 apply 拿到的是空。
+          inject: function () {
+            if (!currentForm) currentForm = readForm(ctx);
+            return { form: currentForm };
+          },
         }, PromptSwitchSection);
       });
     }

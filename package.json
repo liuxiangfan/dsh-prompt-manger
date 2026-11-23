@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "index.js",
   "description": "Switchable system-prompt template library for DeepSeek Harness",
   "exports": {
     ".": "./index.js",
