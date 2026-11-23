@@ -1,457 +1,535 @@
-/* dsh-prompt-manager —— 客户端半区
+/**
+ * 设置页：提示词管理。
  *
- * 设置 → 「提示词管理」：
- *   - 模板下拉（切换就是切系统提示词，下一回合生效）
- *   - 正文编辑框（改选中的那套）
- *   - 新建 / 删除 / 保存
- *
- * 读写走 ctx.configForms.get('prompt-manager')：改的是插件配置里
- * templates（JSON 字符串）与 active 两个字段，Host 侧每回合求值一次。
- *
- * 手写 bundle：不经打包器，只 require 平台模块表里的 react。
+ * 两个页签：全局提示词（所有会话）/ 项目提示词（按工作目录归属）。
+ * 卡片列表照 Claude Code 的全局提示词面板排：一行摘要在前，点开看全文，
+ * 右侧「应用」按钮切换。样式只引用主题 token，不 require 任何宿主客户端包。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-prompt-manager',
-  factory: (require) => {
-    var module = { exports: {} };
-    var exports = module.exports;
-    Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+  factory(require) {
+    const React = require('react')
+    const { useState, useEffect, useMemo, useRef } = React
+    const h = React.createElement
 
-    var React = require('react');
-    var h = React.createElement;
+    const NS = 'prompt-manager'
+    const PREVIEW = 150
 
-    /** 设置命名空间 = cordis.patch.yml 里的 id。 */
-    var NS = 'prompt-manager';
+    /* ---------------- 配置读写 ---------------- */
 
-    var S = {
-      root: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        padding: '4px 2px 24px',
-        fontFamily: 'inherit',
-        fontSize: '13px',
-        lineHeight: '1.6',
-        color: 'inherit',
-      },
-      row: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
-      title: { margin: '0', fontSize: '15px', fontWeight: '600' },
-      hint: { margin: '0', opacity: '0.7', fontSize: '12px' },
-      pill: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '2px 10px',
-        borderRadius: '999px',
-        border: '1px solid rgba(127,127,127,0.3)',
-        fontSize: '12px',
-      },
-      dot: { width: '7px', height: '7px', borderRadius: '50%', background: 'currentColor', opacity: '0.75' },
-      select: {
-        padding: '5px 8px',
-        borderRadius: '6px',
-        border: '1px solid rgba(127,127,127,0.3)',
-        background: 'transparent',
-        color: 'inherit',
-        font: 'inherit',
-        fontSize: '12.5px',
-      },
-      area: {
-        width: '100%',
-        boxSizing: 'border-box',
-        minHeight: '280px',
-        resize: 'vertical',
-        padding: '12px',
-        borderRadius: '8px',
-        border: '1px solid rgba(127,127,127,0.28)',
-        background: 'rgba(127,127,127,0.06)',
-        color: 'inherit',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        fontSize: '12.5px',
-        lineHeight: '1.6',
-        outline: 'none',
-      },
-      input: {
-        padding: '5px 8px',
-        borderRadius: '6px',
-        border: '1px solid rgba(127,127,127,0.3)',
-        background: 'transparent',
-        color: 'inherit',
-        font: 'inherit',
-        fontSize: '12.5px',
-        minWidth: '180px',
-      },
-      button: {
-        padding: '6px 14px',
-        borderRadius: '6px',
-        border: '1px solid rgba(127,127,127,0.32)',
-        background: 'transparent',
-        color: 'inherit',
-        font: 'inherit',
-        fontSize: '12.5px',
-        cursor: 'pointer',
-      },
-      primary: {
-        padding: '6px 16px',
-        borderRadius: '6px',
-        border: '1px solid rgba(59,130,246,0.5)',
-        background: 'rgba(59,130,246,0.16)',
-        color: 'inherit',
-        font: 'inherit',
-        fontSize: '12.5px',
-        fontWeight: '600',
-        cursor: 'pointer',
-      },
-      disabled: { opacity: '0.45', cursor: 'not-allowed' },
-      note: { margin: '0', fontSize: '12px', minHeight: '16px', opacity: '0.85' },
-      warn: {
-        margin: '0',
-        fontSize: '12px',
-        padding: '8px 10px',
-        borderRadius: '6px',
-        border: '1px solid rgba(234,179,8,0.35)',
-        background: 'rgba(234,179,8,0.08)',
-      },
-      meta: { fontSize: '12px', opacity: '0.7' },
-    };
-
-    var EMPTY = {};
-
-    /** 解析 Host 传来的模板库；坏 JSON 当空库。 */
-    function parse(raw) {
-      try {
-        var list = JSON.parse(typeof raw === 'string' && raw ? raw : '[]');
-        if (!Array.isArray(list)) return [];
-        return list
-          .filter(function (item) { return item && typeof item === 'object'; })
-          .map(function (item) {
-            return {
-              name: typeof item.name === 'string' ? item.name : '',
-              text: typeof item.text === 'string' ? item.text : '',
-            };
-          })
-          .filter(function (item) { return item.name !== ''; });
-      } catch (error) {
-        return [];
-      }
-    }
-
-    function dump(list) {
-      return JSON.stringify(
-        list.map(function (item) { return { name: item.name, text: item.text }; }),
-      );
-    }
-
-    /** 订阅共享配置表单的草稿/已接受值。 */
-    function useFormSnapshot(form) {
-      var useSync = React.useSyncExternalStore;
-      var subscribe = React.useCallback(
-        function (listener) { return form.subscribe(listener); },
-        [form],
-      );
-      var read = React.useCallback(function () { return form.getSnapshot(); }, [form]);
-      if (typeof useSync === 'function') return useSync(subscribe, read);
-      var state = React.useState(read());
-      var value = state[0];
-      var setValue = state[1];
-      React.useEffect(function () {
-        return subscribe(function () { setValue(read()); });
-      }, [subscribe]);
-      React.useEffect(function () { setValue(read()); });
-      return value;
-    }
-
-    function PromptSwitchSection(props) {
-      var form = props.form || currentForm;
-      if (!form) {
-        return h('div', { style: S.root },
-          h('h2', { style: S.title }, '提示词管理'),
-          h('p', { style: S.warn }, '配置服务还没就绪（configForms 不可用），稍后再打开这个页面试试。'));
-      }
-
-      var snap = useFormSnapshot(form) || EMPTY;
-      var value = snap.value || EMPTY;
-      var ready = Boolean(snap.value);
-      var writable = snap.writable !== false;
-
-      var listState = React.useState([]);
-      var list = listState[0];
-      var setList = listState[1];
-
-      var indexState = React.useState(0);
-      var index = indexState[0];
-      var setIndex = indexState[1];
-
-      var draftState = React.useState('');
-      var draft = draftState[0];
-      var setDraft = draftState[1];
-
-      var dirtyState = React.useState(false);
-      var dirty = dirtyState[0];
-      var setDirty = dirtyState[1];
-
-      var nameState = React.useState('');
-      var newName = nameState[0];
-      var setNewName = nameState[1];
-
-      var busyState = React.useState(false);
-      var busy = busyState[0];
-      var setBusy = busyState[1];
-
-      var noteState = React.useState('');
-      var note = noteState[0];
-      var setNote = noteState[1];
-
-      var initedRef = React.useRef(false);
-
-      var hostRaw = typeof value.templates === 'string' ? value.templates : '[]';
-      var hostActive = typeof value.active === 'string' ? value.active : '';
-      var enabled = value.enabled !== false;
-
-      // Host 值落进本地草稿：首次必填，之后只在没脏改动时跟随
-      React.useEffect(function () {
-        if (!ready) return;
-        if (!initedRef.current) {
-          initedRef.current = true;
-          var first = parse(hostRaw);
-          setList(first);
-          var found = -1;
-          for (var i = 0; i < first.length; i += 1) {
-            if (first[i].name === hostActive) { found = i; break; }
-          }
-          var start = found >= 0 ? found : 0;
-          setIndex(start);
-          setDraft(first[start] ? first[start].text : '');
-          return;
-        }
-        if (!dirty) {
-          var next = parse(hostRaw);
-          setList(next);
-          var hit = -1;
-          for (var j = 0; j < next.length; j += 1) {
-            if (next[j].name === hostActive) { hit = j; break; }
-          }
-          var pickIndex = hit >= 0 ? hit : 0;
-          setIndex(pickIndex);
-          setDraft(next[pickIndex] ? next[pickIndex].text : '');
-        }
-      }, [ready, hostRaw, hostActive, dirty]);
-
-      var current = list[index];
-
-      function run(action, label) {
-        if (busy || !writable) return Promise.resolve(false);
-        setBusy(true);
-        setNote('正在' + label + '…');
-        return Promise.resolve()
-          .then(action)
-          .then(function (ok) {
-            setNote(ok ? label + '成功，下一回合生效' : label + '被 Host 拒绝');
-            return ok === true;
-          })
-          .catch(function (error) {
-            setNote(label + '失败：' + String((error && error.message) || error));
-            return false;
-          })
-          .then(function (ok) {
-            setBusy(false);
-            return ok;
-          });
-      }
-
-      /** 把草稿合并回列表，再落盘。 */
-      function saveList(nextList, nextActive, label) {
-        return run(function () {
-          return form.mutate([
-            { op: 'set', path: ['templates'], value: dump(nextList) },
-            { op: 'set', path: ['active'], value: nextActive },
-          ]);
-        }, label).then(function (ok) {
-          if (ok) {
-            setList(nextList);
-            setDirty(false);
-          }
-          return ok;
-        });
-      }
-
-      function handleSelect(event) {
-        var at = Number(event.target.value);
-        if (!Number.isFinite(at)) return;
-        var picked = list[at];
-        if (!picked) return;
-        setIndex(at);
-        setDraft(picked.text);
-        setDirty(false);
-        // 切换本身就是全部目的：立刻写入 active
-        run(function () {
-          return form.mutate([{ op: 'set', path: ['active'], value: picked.name }]);
-        }, '切换到「' + picked.name + '」');
-      }
-
-      function handleSaveText() {
-        if (!current) return;
-        var next = list.slice();
-        next[index] = { name: current.name, text: draft };
-        saveList(next, current.name, '保存「' + current.name + '」');
-      }
-
-      function handleCreate() {
-        var legal = newName.trim();
-        if (!legal) {
-          setNote('先给新模板起个名字');
-          return;
-        }
-        for (var i = 0; i < list.length; i += 1) {
-          if (list[i].name === legal) {
-            setNote('已经有同名模板「' + legal + '」');
-            return;
-          }
-        }
-        var next = list.concat([{ name: legal, text: draft }]);
-        saveList(next, legal, '新建「' + legal + '」').then(function (ok) {
-          if (ok) {
-            setIndex(next.length - 1);
-            setNewName('');
-          }
-        });
-      }
-
-      function handleDelete() {
-        if (!current) return;
-        var next = list.filter(function (item) { return item.name !== current.name; });
-        var nextActive = next[0] ? next[0].name : '';
-        saveList(next, nextActive, '删除「' + current.name + '」').then(function (ok) {
-          if (ok) {
-            setIndex(0);
-            setDraft(next[0] ? next[0].text : '');
-          }
-        });
-      }
-
-      function handleToggle() {
-        var next = !enabled;
-        run(function () { return form.set('enabled', next); }, next ? '启用' : '停用');
-      }
-
-      var options = list.map(function (item, at) {
-        return h('option', { key: item.name, value: String(at) }, item.name);
-      });
-
-      return h('div', { style: S.root },
-        h('div', { style: S.row },
-          h('h2', { style: S.title }, '提示词管理'),
-          h('span', { style: S.pill },
-            h('span', { style: S.dot, 'aria-hidden': 'true' }),
-            enabled ? '已启用' : '已停用'),
-          ready ? null : h('span', { style: S.meta }, '（正在读取配置…）')),
-        h('p', { style: S.hint },
-          '每套模板是一段系统提示词，插在 Harness 自带段之后。',
-          '下拉切换即时生效——不用重启，改完下一条消息就带上新模板。'),
-
-        !writable
-          ? h('p', { style: S.warn }, '这项配置被上层 patch 覆盖，界面里改不动。')
-          : null,
-
-        list.length === 0
-          ? h('p', { style: S.hint }, '模板库还是空的：在下面输入名字点「另存为新模板」，正文就用编辑框里的内容。')
-          : h('div', { style: S.row },
-            h('span', { style: S.meta }, '当前模板'),
-            h('select', {
-              style: S.select,
-              value: String(index),
-              disabled: busy || !writable,
-              onChange: handleSelect,
-            }, options),
-            h('span', { style: S.meta }, (current ? current.text.length : 0) + ' 字符')),
-
-        h('textarea', {
-          style: S.area,
-          value: draft,
-          spellCheck: false,
-          disabled: !writable || !current,
-          placeholder: current
-            ? '这套模板的正文……'
-            : '模板库为空。先写正文，再给它起个名字另存。',
-          onChange: function (event) {
-            setDraft(event.target.value);
-            setDirty(true);
-            setNote('');
-          },
-        }),
-
-        h('div', { style: S.row },
-          h('button', {
-            type: 'button',
-            style: busy || !writable || !current ? Object.assign({}, S.primary, S.disabled) : S.primary,
-            disabled: busy || !writable || !current,
-            onClick: handleSaveText,
-          }, dirty ? '保存修改' : '保存'),
-          h('input', {
-            style: S.input,
-            value: newName,
-            placeholder: '新模板名字',
-            disabled: busy || !writable,
-            onChange: function (event) { setNewName(event.target.value); },
-          }),
-          h('button', {
-            type: 'button',
-            style: busy || !writable ? Object.assign({}, S.button, S.disabled) : S.button,
-            disabled: busy || !writable,
-            onClick: handleCreate,
-          }, '另存为新模板'),
-          h('button', {
-            type: 'button',
-            style: busy || !writable || !current ? Object.assign({}, S.button, S.disabled) : S.button,
-            disabled: busy || !writable || !current,
-            onClick: handleDelete,
-          }, '删除这套'),
-          h('button', {
-            type: 'button',
-            style: busy || !writable ? Object.assign({}, S.button, S.disabled) : S.button,
-            disabled: busy || !writable,
-            onClick: handleToggle,
-          }, enabled ? '停用注入' : '启用注入')),
-
-        h('p', { style: S.note }, note),
-        h('p', { style: S.hint },
-          '模板库存在 profile 的 cordis.patch.yml（条目 prompt-manager 的 config.templates）。',
-          '也可以直接对 agent 说「切到 XX 模板」，走 prompt_manager 工具。'));
-    }
-
-    var inject = ['slots', 'configForms'];
-
-    /** 槽位渲染器没把 inject props 传下来时的兜底。 */
-    var currentForm = null;
-
-    /** configForms 可能晚于本模块就绪，取不到就留空，渲染时再试一次。 */
     function readForm(ctx) {
       try {
-        return ctx.configForms.get(NS) || null;
-      } catch (error) {
-        return null;
+        return ctx.configForms.get(NS)
+      } catch {
+        return undefined
       }
     }
 
-    function apply(ctx) {
-      currentForm = readForm(ctx);
-      ctx.slots.inject('settings.section', function () {
-        return ctx.slots.register({
+    function snapshotOf(form) {
+      if (!form || typeof form.getSnapshot !== 'function') return undefined
+      try {
+        return form.getSnapshot()
+      } catch {
+        return undefined
+      }
+    }
+
+    function setKey(form, key, value) {
+      if (!form || typeof form.set !== 'function') return
+      try {
+        form.set(key, value)
+      } catch {}
+    }
+
+    function setPath(form, path, value) {
+      if (!form || typeof form.mutate !== 'function') return
+      try {
+        form.mutate([{ op: 'set', path, value }])
+      } catch {}
+    }
+
+    /* ---------------- 纯数据 ---------------- */
+
+    function listOf(raw) {
+      let value
+      try {
+        value = JSON.parse(String(raw ?? '[]'))
+      } catch {
+        return []
+      }
+      if (!Array.isArray(value)) return []
+      return value
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({ name: String(item.name ?? ''), text: String(item.text ?? '') }))
+        .filter((item) => item.name !== '')
+    }
+
+    function mapOf(raw) {
+      let value
+      try {
+        value = JSON.parse(String(raw ?? '{}'))
+      } catch {
+        return {}
+      }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+      const out = {}
+      for (const [key, group] of Object.entries(value)) {
+        if (!key || !group || typeof group !== 'object') continue
+        out[key] = { templates: listOf(JSON.stringify(group.templates ?? [])), active: String(group.active ?? '') }
+      }
+      return out
+    }
+
+    const dumpList = (list) => JSON.stringify(list.map((item) => ({ name: item.name, text: item.text })))
+    const dumpMap = (map) => JSON.stringify(map)
+
+    /** 路径归一，和后端 normalizePath 保持一致。 */
+    const norm = (value) => String(value ?? '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/+$/, '').toLowerCase()
+
+    const summaryOf = (text) => {
+      const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
+      if (flat === '') return '（空提示词）'
+      return flat.length > PREVIEW ? flat.slice(0, PREVIEW) + '…' : flat
+    }
+
+    const shortPath = (path) => {
+      const parts = String(path).replace(/\\/g, '/').split('/').filter(Boolean)
+      if (parts.length <= 2) return String(path)
+      return '…/' + parts.slice(-2).join('/')
+    }
+
+    /* ---------------- 样式 ---------------- */
+
+    const CSS = `
+.pm { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 24px; color: var(--dsw-alias-text-primary, inherit); }
+.pm-head { display: flex; align-items: center; gap: 10px; }
+.pm-title { font-size: 15px; font-weight: 600; margin: 0; }
+.pm-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.2)); }
+.pm-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; font: inherit; font-size: 13px; cursor: pointer; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-tab.is-on { color: var(--dsw-alias-text-primary, inherit); border-bottom-color: var(--dsw-alias-brand-primary, #4d6bfe); font-weight: 600; }
+.pm-note { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); margin: 0; }
+.pm-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pm-grow { flex: 1 1 auto; }
+.pm-btn { appearance: none; font: inherit; font-size: 12px; line-height: 1; padding: 7px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); background: var(--dsw-alias-bg-base, transparent); color: var(--dsw-alias-text-primary, inherit); }
+.pm-btn:hover { border-color: var(--dsw-alias-brand-primary, #4d6bfe); }
+.pm-btn.primary { background: var(--dsw-alias-brand-primary, #4d6bfe); border-color: transparent; color: #fff; }
+.pm-btn.ghost { border-color: transparent; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); padding: 6px 8px; }
+.pm-btn.ghost:hover { color: var(--dsw-alias-text-primary, inherit); }
+.pm-input, .pm-area { font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); background: var(--dsw-alias-bg-base, transparent); color: inherit; }
+.pm-area { min-height: 190px; resize: vertical; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.pm-input:focus, .pm-area:focus { outline: none; border-color: var(--dsw-alias-brand-primary, #4d6bfe); }
+.pm-list { display: flex; flex-direction: column; gap: 8px; }
+.pm-card { border: 1px solid var(--dsw-alias-border-secondary, rgba(127,127,127,.22)); border-radius: 8px; padding: 10px 12px; background: var(--dsw-alias-bg-elevated, rgba(127,127,127,.05)); }
+.pm-card.is-active { border-color: var(--dsw-alias-brand-primary, #4d6bfe); box-shadow: 0 0 0 1px var(--dsw-alias-brand-primary, #4d6bfe) inset; }
+.pm-card-head { display: flex; align-items: center; gap: 8px; }
+.pm-name { font-size: 13px; font-weight: 600; }
+.pm-badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--dsw-alias-bg-success, rgba(40,167,69,.14)); color: var(--dsw-alias-text-success, #2f9e44); }
+.pm-preview { font-size: 12px; line-height: 1.6; margin: 6px 0 8px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-foot { display: flex; align-items: center; gap: 6px; }
+.pm-foot .pm-grow { flex: 1; }
+.pm-full { margin: 10px 0 0; padding: 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; border-radius: 6px; background: var(--dsw-alias-bg-base, rgba(127,127,127,.08)); }
+.pm-group { display: flex; flex-direction: column; gap: 8px; }
+.pm-group-head { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+.pm-group-path { font-size: 12px; font-weight: 600; }
+.pm-group-meta { font-size: 11px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-empty { font-size: 12px; padding: 18px 12px; text-align: center; border: 1px dashed var(--dsw-alias-border-secondary, rgba(127,127,127,.3)); border-radius: 8px; color: var(--dsw-alias-text-secondary, rgba(127,127,127,.95)); }
+.pm-warn { font-size: 12px; color: var(--dsw-alias-text-warning, #b26a00); }
+`
+
+    /* ---------------- 卡片 ---------------- */
+
+    function Card({ name, text, active, open, onApply, onToggle, onEdit, onRemove }) {
+      return h('div', { className: 'pm-card' + (active ? ' is-active' : '') },
+        h('div', { className: 'pm-card-head' },
+          h('span', { className: 'pm-name' }, name),
+          active ? h('span', { className: 'pm-badge' }, '已应用') : null,
+          h('span', { className: 'pm-grow' }),
+          h('button', { className: 'pm-btn ghost', title: '编辑', onClick: onEdit }, '编辑'),
+          h('button', { className: 'pm-btn ghost', title: '删除', onClick: onRemove }, '删除'),
+        ),
+        h('div', { className: 'pm-preview' }, summaryOf(text)),
+        h('div', { className: 'pm-foot' },
+          active
+            ? h('span', { className: 'pm-group-meta' }, text.length + ' 字符')
+            : h('button', { className: 'pm-btn', onClick: onApply }, '应用'),
+          h('span', { className: 'pm-grow' }),
+          h('button', { className: 'pm-btn ghost', onClick: onToggle }, open ? '收起' : '展开'),
+        ),
+        open ? h('pre', { className: 'pm-full' }, text) : null,
+      )
+    }
+
+    function Editor({ name, text, onName, onText, onSave, onCancel, saveLabel }) {
+      return h('div', { className: 'pm-card is-active' },
+        h('input', {
+          className: 'pm-input',
+          placeholder: '提示词名字，例如：代码审查',
+          value: name,
+          onChange: (event) => onName(event.target.value),
+        }),
+        h('div', { style: { height: 8 } }),
+        h('textarea', {
+          className: 'pm-area',
+          placeholder: '这里写提示词正文，切换后原样注入系统提示词。',
+          value: text,
+          onChange: (event) => onText(event.target.value),
+        }),
+        h('div', { className: 'pm-foot', style: { marginTop: 8 } },
+          h('span', { className: 'pm-grow' }),
+          h('button', { className: 'pm-btn ghost', onClick: onCancel }, '取消'),
+          h('button', { className: 'pm-btn primary', onClick: onSave }, saveLabel),
+        ),
+      )
+    }
+
+    /* ---------------- 面板 ---------------- */
+
+    function Panel({ form, ctx }) {
+      const [, bump] = useState(0)
+      const rerender = () => bump((n) => n + 1)
+      const formRef = useRef(form)
+      if (form) formRef.current = form
+
+      const [tab, setTab] = useState('global')
+      const [editing, setEditing] = useState(null)
+      const [openKey, setOpenKey] = useState('')
+      const [newPath, setNewPath] = useState('')
+      const [notice, setNotice] = useState('')
+
+      useEffect(() => {
+        const current = readForm(ctx)
+        if (!current) return undefined
+        formRef.current = current
+        rerender()
+        if (typeof current.subscribe !== 'function') return undefined
+        try {
+          const off = current.subscribe(rerender)
+          return typeof off === 'function' ? off : undefined
+        } catch {
+          return undefined
+        }
+      }, [ctx])
+
+      const live = formRef.current ?? form
+      const snap = snapshotOf(live)
+      const value = snap?.value ?? {}
+      const writable = snap ? snap.writable !== false : true
+      const enabled = value.enabled !== false
+      const list = useMemo(() => listOf(value.templates), [value.templates])
+      const projects = useMemo(() => mapOf(value.projects), [value.projects])
+      const projectPaths = useMemo(() => Object.keys(projects).sort((a, b) => a.localeCompare(b)), [projects])
+
+      if (!live) {
+        return h('div', { className: 'pm' },
+          h('style', null, CSS),
+          h('div', { className: 'pm-empty' }, '配置服务还没就绪，稍等片刻再打开这一页。'),
+        )
+      }
+
+      const flash = (message) => {
+        setNotice(message)
+        window.setTimeout(() => setNotice(''), 2200)
+      }
+      const guard = () => {
+        if (!writable) {
+          flash('当前配置是只读的，改不了。')
+          return false
+        }
+        return true
+      }
+
+      /* ----- 全局 ----- */
+
+      const applyGlobal = (name) => {
+        if (!guard()) return
+        setPath(live, ['active'], name)
+        setPath(live, ['enabled'], true)
+        flash('已切换到「' + name + '」')
+        rerender()
+      }
+
+      const saveGlobal = () => {
+        if (!guard() || !editing) return
+        const name = editing.name.trim()
+        if (!name) return flash('先起个名字')
+        const next = list.filter((item) => item.name !== editing.oldName).slice()
+        const index = list.findIndex((item) => item.name === editing.oldName)
+        next.splice(index < 0 ? next.length : index, 0, { name, text: editing.text })
+        setPath(live, ['templates'], dumpList(next))
+        if (editing.isNew || editing.oldName === value.active) setPath(live, ['active'], name)
+        setEditing(null)
+        flash('已保存「' + name + '」')
+        rerender()
+      }
+
+      const removeGlobal = (name) => {
+        if (!guard()) return
+        if (!window.confirm('删掉「' + name + '」？')) return
+        const next = list.filter((item) => item.name !== name)
+        setPath(live, ['templates'], dumpList(next))
+        if (value.active === name) setPath(live, ['active'], next[0]?.name ?? '')
+        flash('已删除「' + name + '」')
+        rerender()
+      }
+
+      /* ----- 项目 ----- */
+
+      const applyProject = (path, name) => {
+        if (!guard()) return
+        const key = Object.keys(projects).find((item) => norm(item) === norm(path))
+        if (!key) return
+        const next = { ...projects, [key]: { ...projects[key], active: name } }
+        setPath(live, ['projects'], dumpMap(next))
+        setPath(live, ['enabled'], true)
+        flash('「' + shortPath(key) + '」已切到「' + name + '」')
+        rerender()
+      }
+
+      const saveProject = () => {
+        if (!guard() || !editing) return
+        const name = editing.name.trim()
+        if (!name) return flash('先起个名字')
+        const key = Object.keys(projects).find((item) => norm(item) === norm(editing.path))
+        if (!key) return flash('项目目录不见了，重新打开这一页')
+        const group = projects[key]
+        const kept = group.templates.filter((item) => item.name !== editing.oldName)
+        const index = group.templates.findIndex((item) => item.name === editing.oldName)
+        kept.splice(index < 0 ? kept.length : index, 0, { name, text: editing.text })
+        const next = { ...projects, [key]: { templates: kept, active: editing.isNew ? name : group.active } }
+        setPath(live, ['projects'], dumpMap(next))
+        setEditing(null)
+        flash('已保存「' + name + '」')
+        rerender()
+      }
+
+      const removeProject = (path, name) => {
+        if (!guard()) return
+        if (!window.confirm('删掉「' + name + '」？')) return
+        const key = Object.keys(projects).find((item) => norm(item) === norm(path))
+        if (!key) return
+        const group = projects[key]
+        const kept = group.templates.filter((item) => item.name !== name)
+        const next = { ...projects }
+        const active = group.active === name ? (kept[0]?.name ?? '') : group.active
+        next[key] = { templates: kept, active }
+        setPath(live, ['projects'], dumpMap(next))
+        flash('已删除「' + name + '」')
+        rerender()
+      }
+
+      const addProject = () => {
+        if (!guard()) return
+        const path = newPath.trim()
+        if (!path) return flash('填一个项目根目录，例如 D:/code/site')
+        const key = Object.keys(projects).find((item) => norm(item) === norm(path))
+        if (key) {
+          flash('这个目录已经在列表里了')
+          setNewPath('')
+          return
+        }
+        const next = { ...projects, [path]: { templates: [], active: '' } }
+        setPath(live, ['projects'], dumpMap(next))
+        setNewPath('')
+        rerender()
+      }
+
+      const removeProjectGroup = (path) => {
+        if (!guard()) return
+        if (!window.confirm('移掉「' + shortPath(path) + '」这个分组？里面的提示词会一起删。')) return
+        const key = Object.keys(projects).find((item) => norm(item) === norm(path))
+        if (!key) return
+        const next = { ...projects }
+        delete next[key]
+        setPath(live, ['projects'], dumpMap(next))
+        rerender()
+      }
+
+      /* ----- 渲染 ----- */
+
+      const head = h('div', { className: 'pm-head' },
+        h('h3', { className: 'pm-title' }, '提示词管理'),
+        h('label', { className: 'pm-switch' },
+          h('input', {
+            type: 'checkbox',
+            checked: enabled,
+            onChange: (event) => {
+              if (!guard()) return
+              setKey(live, 'enabled', event.target.checked)
+              rerender()
+            },
+          }),
+          enabled ? '注入中' : '已停用',
+        ),
+      )
+
+      const tabs = h('div', { className: 'pm-tabs' },
+        h('button', {
+          className: 'pm-tab' + (tab === 'global' ? ' is-on' : ''),
+          onClick: () => { setTab('global'); setEditing(null); setOpenKey('') },
+        }, '全局提示词'),
+        h('button', {
+          className: 'pm-tab' + (tab === 'project' ? ' is-on' : ''),
+          onClick: () => { setTab('project'); setEditing(null); setOpenKey('') },
+        }, '项目提示词'),
+      )
+
+      let body
+      if (tab === 'global') {
+        const cards = list.map((item) => {
+          const key = 'global::' + item.name
+          if (editing && editing.scope === 'global' && editing.oldName === item.name) {
+            return h(Editor, {
+              key,
+              name: editing.name,
+              text: editing.text,
+              saveLabel: '保存',
+              onName: (next) => setEditing({ ...editing, name: next }),
+              onText: (next) => setEditing({ ...editing, text: next }),
+              onSave: saveGlobal,
+              onCancel: () => setEditing(null),
+            })
+          }
+          return h(Card, {
+            key,
+            name: item.name,
+            text: item.text,
+            active: value.active === item.name,
+            open: openKey === key,
+            onApply: () => applyGlobal(item.name),
+            onToggle: () => setOpenKey(openKey === key ? '' : key),
+            onEdit: () => setEditing({ scope: 'global', oldName: item.name, name: item.name, text: item.text }),
+            onRemove: () => removeGlobal(item.name),
+          })
+        })
+
+        if (editing && editing.scope === 'global' && editing.isNew) {
+          cards.push(h(Editor, {
+            key: 'global::__new__',
+            name: editing.name,
+            text: editing.text,
+            saveLabel: '保存',
+            onName: (next) => setEditing({ ...editing, name: next }),
+            onText: (next) => setEditing({ ...editing, text: next }),
+            onSave: saveGlobal,
+            onCancel: () => setEditing(null),
+          }))
+        }
+
+        body = h(React.Fragment, null,
+          h('p', { className: 'pm-note' }, '全局提示词对所有会话生效。选一套点「应用」，下一条消息起按它注入。'),
+          h('div', { className: 'pm-bar' },
+            h('span', { className: 'pm-grow' }),
+            h('button', {
+              className: 'pm-btn primary',
+              disabled: !!editing,
+              onClick: () => setEditing({ scope: 'global', oldName: '', name: '', text: '', isNew: true }),
+            }, '+ 添加全局提示词'),
+          ),
+          cards.length
+            ? h('div', { className: 'pm-list' }, cards)
+            : h('div', { className: 'pm-empty' }, '还没有全局提示词。点右上角加一套，或者切到项目提示词。'),
+        )
+      } else {
+        const groups = projectPaths.map((path) => {
+          const group = projects[path]
+          const cards = group.templates.map((item) => {
+            const key = path + '::' + item.name
+            if (editing && editing.scope === 'project' && norm(editing.path) === norm(path) && editing.oldName === item.name) {
+              return h(Editor, {
+                key,
+                name: editing.name,
+                text: editing.text,
+                saveLabel: '保存',
+                onName: (next) => setEditing({ ...editing, name: next }),
+                onText: (next) => setEditing({ ...editing, text: next }),
+                onSave: saveProject,
+                onCancel: () => setEditing(null),
+              })
+            }
+            return h(Card, {
+              key,
+              name: item.name,
+              text: item.text,
+              active: group.active === item.name,
+              open: openKey === key,
+              onApply: () => applyProject(path, item.name),
+              onToggle: () => setOpenKey(openKey === key ? '' : key),
+              onEdit: () => setEditing({ scope: 'project', path, oldName: item.name, name: item.name, text: item.text }),
+              onRemove: () => removeProject(path, item.name),
+            })
+          })
+
+          if (editing && editing.scope === 'project' && editing.isNew && norm(editing.path) === norm(path)) {
+            cards.push(h(Editor, {
+              key: path + '::__new__',
+              name: editing.name,
+              text: editing.text,
+              saveLabel: '保存',
+              onName: (next) => setEditing({ ...editing, name: next }),
+              onText: (next) => setEditing({ ...editing, text: next }),
+              onSave: saveProject,
+              onCancel: () => setEditing(null),
+            }))
+          }
+
+          return h('div', { className: 'pm-group', key: path },
+            h('div', { className: 'pm-group-head' },
+              h('span', { className: 'pm-group-path', title: path }, shortPath(path)),
+              h('span', { className: 'pm-group-meta' }, group.templates.length + ' 套' + (group.active ? '　当前: ' + group.active : '　未选')),
+              h('span', { className: 'pm-grow' }),
+              h('button', {
+                className: 'pm-btn ghost',
+                disabled: !!editing,
+                onClick: () => setEditing({ scope: 'project', path, oldName: '', name: '', text: '', isNew: true }),
+              }, '+ 添加'),
+              h('button', { className: 'pm-btn ghost', onClick: () => removeProjectGroup(path) }, '移掉分组'),
+            ),
+            cards.length
+              ? h('div', { className: 'pm-list' }, cards)
+              : h('div', { className: 'pm-empty' }, '这个项目还没有提示词。点「+ 添加」写一套。'),
+          )
+        })
+
+        body = h(React.Fragment, null,
+          h('p', { className: 'pm-note' }, '项目提示词只在工作目录落在这个项目里的会话生效，优先于全局。'),
+          h('div', { className: 'pm-bar' },
+            h('input', {
+              className: 'pm-input',
+              style: { flex: '1 1 260px', width: 'auto' },
+              placeholder: '项目根目录，例如 D:/code/site',
+              value: newPath,
+              onChange: (event) => setNewPath(event.target.value),
+              onKeyDown: (event) => { if (event.key === 'Enter') addProject() },
+            }),
+            h('button', { className: 'pm-btn', onClick: addProject }, '+ 新建分组'),
+          ),
+          groups.length
+            ? h('div', { className: 'pm-list' }, groups)
+            : h('div', { className: 'pm-empty' }, '还没有项目分组。上面填一个目录，再点「+ 新建分组」。'),
+        )
+      }
+
+      return h('div', { className: 'pm' },
+        h('style', null, CSS),
+        head,
+        tabs,
+        body,
+        notice ? h('div', { className: 'pm-warn' }, notice) : null,
+      )
+    }
+
+    return {
+      inject: ['slots', 'configForms'],
+      apply(ctx) {
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'prompt-manager',
           order: 61,
-          label: function () { return '提示词管理'; },
-          // 每次渲染都重取：设置页打开得比插件晚时，第一次 apply 拿到的是空。
-          inject: function () {
-            if (!currentForm) currentForm = readForm(ctx);
-            return { form: currentForm };
-          },
-        }, PromptSwitchSection);
-      });
+          label: () => '提示词管理',
+          inject: () => ({ form: readForm(ctx), ctx }),
+        }, (props) => h(Panel, props)))
+      },
     }
-
-    exports.apply = apply;
-    exports.inject = inject;
-    return module.exports;
   },
-});
+})

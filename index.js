@@ -5,8 +5,10 @@
  *   1. 注册一个系统提示词段，正文 = 当前选中模板的 text（每回合求值）。
  *   2. 注册 prompt_manager 工具，让 agent 自己列模板、切模板、加模板。
  *
- * 模板库存在插件配置的 `templates` 字段里（JSON 字符串），
- * 设置页与工具写的是同一份数据，谁改都通。
+ * 模板库分两层：
+ *   - 全局库 `templates` / `active`：所有会话都用。
+ *   - 项目库 `projects`：按会话工作目录归属，命中的项目盖过全局。
+ * 两层都靠每回合求值的 text 回调决定实际注入什么，设置页与工具写同一份数据。
  */
 
 export const name = 'dsh-prompt-manager'
@@ -56,7 +58,9 @@ export const Config = z?.object
       active: z.string().default('').volatile()
         .description('当前启用的模板名。为空或找不到时用模板库的第一条。'),
       templates: z.string().default(EMPTY_LIBRARY).volatile()
-        .description('模板库，JSON 数组：[{ "name": "编码", "text": "……" }]'),
+        .description('全局提示词库，JSON 数组：[{ "name": "编码", "text": "……" }]'),
+      projects: z.string().default('{}').volatile()
+        .description('项目提示词库，JSON 对象：{ "D:/某个项目": { "templates": [...], "active": "名字" } }'),
       order: z.number().default(DEFAULT_ORDER)
         .description('插入位置，越大越靠后。10300 = 系统提示词最下面。'),
       complete: z.boolean().default(false)
@@ -103,11 +107,17 @@ const asNumber = (value, fallback) => {
  * @returns {{ name: string, text: string }[]}
  */
 export function parseTemplates(raw) {
+  const plain = unwrap(raw)
   let list
-  try {
-    list = JSON.parse(asText(raw, EMPTY_LIBRARY))
-  } catch {
-    return []
+  if (Array.isArray(plain)) {
+    // 项目库里的 templates 已经是数组，不用再过一遍 JSON。
+    list = plain
+  } else {
+    try {
+      list = JSON.parse(asText(raw, EMPTY_LIBRARY))
+    } catch {
+      return []
+    }
   }
   if (!Array.isArray(list)) return []
   return list
@@ -126,7 +136,79 @@ export function pickTemplate(list, active) {
   return { name: '', text: '', fallback: false }
 }
 
+/**
+ * 路径归一：Windows 反斜杠、结尾斜杠、大小写都不该影响匹配。
+ * 项目提示词的归属判断全走这里，别在别处另写一套。
+ */
+export function normalizePath(value) {
+  const raw = asText(value).trim().replace(/\\/g, '/')
+  if (raw === '') return ''
+  return raw.replace(/\/{2,}/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * 解析项目库。坏 JSON 当作没有项目，不抛错。
+ * @returns {{ path: string, templates: { name: string, text: string }[], active: string }[]}
+ */
+export function parseProjects(raw) {
+  let map
+  try {
+    map = JSON.parse(asText(raw, '{}'))
+  } catch {
+    return []
+  }
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return []
+  const out = []
+  for (const [key, value] of Object.entries(map)) {
+    const path = asText(key).trim()
+    if (!path || !value || typeof value !== 'object') continue
+    out.push({
+      path,
+      templates: parseTemplates(value.templates),
+      active: asText(value.active),
+    })
+  }
+  return out
+}
+
+/**
+ * 按会话工作目录挑项目：同路径或位于其子目录都算，取最长（最具体）的那个。
+ * 没命中返回 undefined，调用方退回全局库。
+ */
+export function pickProject(list, cwd) {
+  const here = normalizePath(cwd)
+  if (here === '') return undefined
+  let best
+  let bestLength = -1
+  for (const item of list) {
+    const key = normalizePath(item.path)
+    if (key === '') continue
+    if (here !== key && !here.startsWith(key + '/')) continue
+    if (key.length > bestLength) {
+      best = item
+      bestLength = key.length
+    }
+  }
+  return best
+}
+
+/** 从提示词组装上下文里捞当前会话的工作目录；拿不到就返回空串。 */
+function cwdOf(context) {
+  const agent = context?.agent ?? context?.scope
+  const cwd = agent?.session?.header?.cwd
+  return typeof cwd === 'string' ? cwd : ''
+}
+
 const dump = (list) => JSON.stringify(list.map((i) => ({ name: i.name, text: i.text })))
+
+/** 项目库写回：保持对象形状，过滤掉空项目。 */
+const dumpProjects = (list) => JSON.stringify(
+  Object.fromEntries(
+    list
+      .filter((item) => asText(item.path).trim() !== '')
+      .map((item) => [item.path, { templates: item.templates.map((t) => ({ name: t.name, text: t.text })), active: item.active }]),
+  ),
+)
 
 /* ---------- 插件入口 ---------- */
 
@@ -150,6 +232,7 @@ export function apply(ctx, config) {
     enabled: asBool(options.enabled, true),
     active: asText(options.active),
     templates: asText(options.templates, EMPTY_LIBRARY),
+    projects: asText(options.projects, '{}'),
     order: asNumber(options.order, DEFAULT_ORDER),
     complete: asBool(options.complete, false),
   })
@@ -157,10 +240,15 @@ export function apply(ctx, config) {
   /** 生效配置：永远是解包后的普通值，再叠工具写入的内存层。 */
   const effective = () => ({ ...snapshot(), ...(override ?? {}) })
 
-  /** 每回合组装时求值。空串会被组装流程丢掉，等于不注入。 */
-  const sectionText = () => {
+  /**
+   * 每回合组装时求值。空串会被组装流程丢掉，等于不注入。
+   * 组装上下文里带着 agent，agent 带着 session.header.cwd——项目提示词就靠它归属。
+   */
+  const sectionText = (context) => {
     const state = effective()
     if (state.enabled === false) return ''
+    const project = pickProject(parseProjects(state.projects), cwdOf(context))
+    if (project) return pickTemplate(project.templates, project.active).text
     return pickTemplate(parseTemplates(state.templates), state.active).text
   }
 
@@ -225,9 +313,19 @@ export function apply(ctx, config) {
     ]
     if (picked.fallback) lines.push('提示: 配置里的 active=「' + state.active + '」不存在，已退回第一条')
     if (list.length) {
-      lines.push('', '模板:')
+      lines.push('', '全局模板:')
       for (const item of list) {
         lines.push('  ' + (item.name === picked.name ? '*' : '-') + ' ' + item.name + '（' + item.text.length + ' 字符）')
+      }
+    }
+    const projects = parseProjects(state.projects)
+    if (projects.length) {
+      lines.push('', '项目模板:')
+      for (const project of projects) {
+        lines.push('  ' + project.path + '　选中: ' + (project.active || '（未选）'))
+        for (const item of project.templates) {
+          lines.push('    ' + (item.name === project.active ? '*' : '-') + ' ' + item.name + '（' + item.text.length + ' 字符）')
+        }
       }
     }
     if (picked.text) {
@@ -240,8 +338,10 @@ export function apply(ctx, config) {
     const action = asText(args?.action, 'read').trim().toLowerCase()
     const name = asText(args?.name).trim()
     const text = asText(args?.text)
+    const path = asText(args?.path).trim()
     const state = effective()
     const list = parseTemplates(state.templates)
+    const projects = parseProjects(state.projects)
 
     if (action === 'read' || action === 'list' || action === 'status' || action === '') {
       return describe()
@@ -283,6 +383,68 @@ export function apply(ctx, config) {
       return '已删除「' + name + '」，当前模板「' + (active || '（空）') + '」' + (persisted ? '，配置已写入。' : '，本次运行内生效。')
     }
 
+    if (action === 'project-list') {
+      if (!projects.length) return '还没有任何项目提示词。用 project-add，path 填项目根目录（例如 D:/code/site）。'
+      const lines = ['项目提示词:']
+      for (const project of projects) {
+        lines.push('', project.path + '　选中: ' + (project.active || '（未选）'))
+        for (const item of project.templates) {
+          lines.push('  ' + (item.name === project.active ? '*' : '-') + ' ' + item.name + '（' + item.text.length + ' 字符）')
+        }
+      }
+      return lines.join('\n')
+    }
+
+    if (action === 'project-use') {
+      if (!path || !name) return 'project-use 需要 path 和 name。'
+      const key = normalizePath(path)
+      const index = projects.findIndex((item) => normalizePath(item.path) === key)
+      if (index < 0) return '没有路径为「' + path + '」的项目。先 project-add。'
+      const project = projects[index]
+      if (!project.templates.some((item) => item.name === name)) {
+        return '「' + project.path + '」下没有「' + name + '」。现有：'
+          + (project.templates.map((i) => i.name).join('、') || '（空）')
+      }
+      const next = projects.slice()
+      next[index] = { ...project, active: name }
+      const persisted = await save({ projects: dumpProjects(next), enabled: true })
+      return '「' + project.path + '」已切到「' + name + '」' + (persisted ? '，并写入配置。' : '，本次运行内生效。')
+    }
+
+    if (action === 'project-add') {
+      if (!path || !name || !text) return 'project-add 需要 path、name 和 text。'
+      const key = normalizePath(path)
+      const index = projects.findIndex((item) => normalizePath(item.path) === key)
+      const next = projects.slice()
+      if (index < 0) {
+        next.push({ path, templates: [{ name, text }], active: name })
+      } else {
+        const project = projects[index]
+        if (project.templates.some((item) => item.name === name)) {
+          return '「' + project.path + '」下已有同名模板「' + name + '」，换个名字。'
+        }
+        next[index] = { ...project, templates: [...project.templates, { name, text }], active: name }
+      }
+      const persisted = await save({ projects: dumpProjects(next), enabled: true })
+      return '已新增项目模板「' + name + '」@ ' + path + '（' + text.length + ' 字符）'
+        + (persisted ? '，配置已写入。' : '，本次运行内生效。')
+    }
+
+    if (action === 'project-remove') {
+      if (!path || !name) return 'project-remove 需要 path 和 name。'
+      const key = normalizePath(path)
+      const index = projects.findIndex((item) => normalizePath(item.path) === key)
+      if (index < 0) return '没有路径为「' + path + '」的项目。'
+      const project = projects[index]
+      const rest = project.templates.filter((item) => item.name !== name)
+      if (rest.length === project.templates.length) return '「' + project.path + '」下没有「' + name + '」。'
+      const next = projects.slice()
+      if (rest.length === 0) next.splice(index, 1)
+      else next[index] = { ...project, templates: rest, active: project.active === name ? rest[0].name : project.active }
+      const persisted = await save({ projects: dumpProjects(next) })
+      return '已删除「' + name + '」@ ' + project.path + (persisted ? '，配置已写入。' : '，本次运行内生效。')
+    }
+
     if (action === 'on' || action === 'enable') {
       const persisted = await save({ enabled: true })
       return '已启用' + (persisted ? '，配置已写入。' : '，本次运行内生效。')
@@ -293,7 +455,8 @@ export function apply(ctx, config) {
       return '已停用' + (persisted ? '，配置已写入。' : '，本次运行内生效。') + '（模板库保留）'
     }
 
-    return '未知 action: ' + action + '（可用: read / list / use / add / set / remove / on / off）'
+    return '未知 action: ' + action
+      + '（可用: read / list / use / add / set / remove / project-list / project-add / project-use / project-remove / on / off）'
   }
 
   void (async () => {
@@ -309,24 +472,31 @@ export function apply(ctx, config) {
             name: 'prompt_manager',
             description:
               'Manage the switchable system-prompt templates owned by the dsh-prompt-manager plugin. '
+              + 'Global templates apply to every session; project templates apply only to sessions whose '
+              + 'working directory is inside `path`. '
               + 'action=list shows every template and which one is active; '
               + 'action=use switches to `name`; action=add creates a template from `name` and `text`; '
               + 'action=set replaces the `text` of an existing `name`; action=remove deletes `name`; '
+              + 'action=project-list, project-add, project-use and project-remove do the same per project root; '
               + 'action=on and action=off toggle injection without touching the library. '
               + 'Changes take effect from the next turn and are persisted when a config editor is present.',
             parameters: {
               action: {
                 type: 'string',
                 required: true,
-                description: 'One of: list, use, add, set, remove, on, off.',
+                description: 'One of: list, use, add, set, remove, project-list, project-add, project-use, project-remove, on, off.',
               },
               name: {
                 type: 'string',
-                description: 'Template name for use, add, set and remove.',
+                description: 'Template name for use, add, set, remove and the project actions.',
               },
               text: {
                 type: 'string',
                 description: 'Prompt body for add and set.',
+              },
+              path: {
+                type: 'string',
+                description: 'Project root directory for the project actions, for example D:/code/site.',
               },
             },
             output: {
