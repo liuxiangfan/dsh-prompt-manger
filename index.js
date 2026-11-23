@@ -49,6 +49,38 @@ async function loadDefineTool() {
   }
 }
 
+const nodeFs = await import('node:fs')
+const nodePath = await import('node:path')
+const nodeOs = await import('node:os')
+
+/** 宿主的工作区登记表——侧边栏那份列表就是从这儿来的。 */
+const DSH_HOME = process.env.DSH_HOME || nodePath.join(nodeOs.homedir(), '.dsh')
+const WORKSPACE_STORE = nodePath.join(DSH_HOME, 'storages', 'workspace.json')
+
+/**
+ * 读出宿主登记的全部工作区路径：先按 workspaceIds 的顺序，未登记的补在后面。
+ * 读不到就返回空数组，收集逻辑退回「见过的工作目录」。
+ */
+export function readHostWorkspaces(file = WORKSPACE_STORE) {
+  let doc
+  try {
+    doc = JSON.parse(nodeFs.readFileSync(file, 'utf8'))
+  } catch {
+    return []
+  }
+  const table = doc?.tables?.workspaces
+  if (!table || typeof table !== 'object') return []
+  const order = Array.isArray(doc?.global?.workspaceIds) ? doc.global.workspaceIds : []
+  const ids = [...order, ...Object.keys(table).filter((id) => !order.includes(id))]
+  const out = []
+  for (const id of ids) {
+    const row = table[id]
+    const path = typeof row?.path === 'string' ? row.path.trim() : ''
+    if (path) out.push(path)
+  }
+  return out
+}
+
 const z = await loadSchema()
 
 export const Config = z?.object
@@ -295,6 +327,7 @@ export function apply(ctx, config) {
     const cwd = cwdOf(context)
     try {
       noteWorkspace(cwd)
+      syncWorkspaces()
     } catch {
       /* 收集目录只是顺手，绝不影响注入 */
     }
@@ -368,6 +401,26 @@ export function apply(ctx, config) {
     lastSeenAt = now
     save({ workspaces: JSON.stringify(next) }).catch(() => {})
   }
+
+  /**
+   * 把宿主登记的工作区并进 workspaces——设置页的下拉要列全，光靠「见过的目录」不够。
+   * 只读一个 JSON、只在新列表出现时写盘，60 秒最多查一次。
+   */
+  let lastSyncAt = 0
+  const syncWorkspaces = (force) => {
+    const now = Date.now()
+    if (!force && now - lastSyncAt < 60000) return
+    lastSyncAt = now
+    const fromHost = readHostWorkspaces()
+    if (!fromHost.length) return
+    const known = parseWorkspaces(effective().workspaces)
+    const seen = new Set(fromHost.map((item) => normalizePath(item)))
+    const merged = [...fromHost, ...known.filter((item) => !seen.has(normalizePath(item)))].slice(0, 40)
+    if (JSON.stringify(merged) === JSON.stringify(known)) return
+    override = { ...effective(), workspaces: JSON.stringify(merged) }
+    save({ workspaces: JSON.stringify(merged) }).catch(() => {})
+  }
+  syncWorkspaces(true)
 
   const describe = () => {
     const state = effective()

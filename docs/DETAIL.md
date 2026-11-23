@@ -29,7 +29,7 @@
 
 - `config.templates` — 全局库：`[{"name":"编码","text":"……"}]`
 - `config.projects` — 项目库：`{"D:/code/site":{"templates":[…],"active":"前端"}}`
-- `config.workspaces` — 见过的工作目录，JSON 数组、最新在前、最多 40 条。插件在每回合注入时顺手记下当前会话的 `cwd`，设置页拿它当「选择已有工作区」的下拉项。只是候选路径，删掉不影响已建的分组。
+- `config.workspaces` — 「选择已有工作区」下拉的候选路径，JSON 数组、最多 40 条。来源两处：宿主的工作区登记表（`$DSH_HOME/storages/workspace.json` 的 `tables.workspaces`，顺序跟 `workspaceIds`）排在前面，插件在注入时见过的会话 `cwd` 补在后面。只是候选项，删掉不影响已建的分组。
 
 配置落在 profile 的 `cordis.patch.yml` 里条目 `prompt-manager` 下。设置页与工具写的是同一份数据。
 
