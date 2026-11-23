@@ -1,0 +1,14 @@
+# dsh-prompt-manager bundle patch
+#
+# 把本包当 bundle 组合进 profile 时读到这份文件。
+# 设置节的 id 必须是 prompt-manager：client.js 里 ctx.configForms.get('prompt-manager')
+# 与这里的 id 一一对应，改一个就得改另一个。
+- insert:
+    - id: prompt-manager
+      name: 'dsh-prompt-manager'
+      config:
+        enabled: true
+        active: ''
+        templates: '[]'
+        order: 10300
+        complete: false

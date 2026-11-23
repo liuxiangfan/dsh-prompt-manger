@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Prompt manager",
+    "description": "Keep a library of named system prompts and switch between them instantly. The active template is injected into every turn, including subagents and workflows.",
+    "detail": "docs/DETAIL.md"
+  }
+}
