@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.js",
   "description": "Switchable system-prompt template library for DeepSeek Harness: many prompts, one global and one per workspace",
