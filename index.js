@@ -367,7 +367,9 @@ export function apply(ctx, config) {
   const save = async (next) => {
     // 先合并再落盘：下一次保存必须带上这一次的改动，否则 /use 这种只改一个字段
     // 的调用会把刚加的模板写丢。
-    override = { ...(override ?? snapshot()), ...next }
+    // 只记「这次真的改了什么」。写成整份快照会把当时的总开关一起冻住，
+    // 设置页再翻转 checkbox 就永远读不到——那是 override 里那个 enabled: true。
+    override = { ...(override ?? {}), ...next }
     const entry = ctx.fiber?.entry
     let editor
     try {
@@ -379,8 +381,11 @@ export function apply(ctx, config) {
       logger?.warn?.('[dsh-prompt-manager] 没有 configEditor，改动只在本次运行内生效')
       return false
     }
+    const applied = { ...override }
     try {
-      await editor.edit(entry, () => ({ ...override }))
+      await editor.edit(entry, (current) => ({ ...(current ?? {}), ...applied }))
+      // 落盘后 volatile 盒子已就地更新，覆盖层交还给活配置。
+      if (override === applied) override = undefined
       return true
     } catch (error) {
       logger?.warn?.('[dsh-prompt-manager] 写入配置失败: ' + String(error?.message ?? error))
@@ -399,7 +404,7 @@ export function apply(ctx, config) {
     const known = parseWorkspaces(current.workspaces)
     if (known.some((item) => normalizePath(item) === normalizePath(cwd))) return
     const next = rememberWorkspace(known, cwd)
-    override = { ...current, workspaces: JSON.stringify(next) }
+    override = { ...(override ?? {}), workspaces: JSON.stringify(next) }
     const now = Date.now()
     if (now - lastSeenAt < 5000) return
     lastSeenAt = now
@@ -421,7 +426,7 @@ export function apply(ctx, config) {
     const seen = new Set(fromHost.map((item) => normalizePath(item)))
     const merged = [...fromHost, ...known.filter((item) => !seen.has(normalizePath(item)))].slice(0, 40)
     if (JSON.stringify(merged) === JSON.stringify(known)) return
-    override = { ...effective(), workspaces: JSON.stringify(merged) }
+    override = { ...(override ?? {}), workspaces: JSON.stringify(merged) }
     save({ workspaces: JSON.stringify(merged) }).catch(() => {})
   }
   syncWorkspaces(true)

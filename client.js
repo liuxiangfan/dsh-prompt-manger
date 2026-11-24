@@ -38,17 +38,21 @@ window.__ModuleLoader__.load({
     }
 
     function setKey(form, key, value) {
-      if (!form || typeof form.set !== 'function') return
+      if (!form || typeof form.set !== 'function') return Promise.resolve(false)
       try {
-        form.set(key, value)
-      } catch {}
+        return Promise.resolve(form.set(key, value)).then((ok) => ok !== false, () => false)
+      } catch {
+        return Promise.resolve(false)
+      }
     }
 
     function setPath(form, path, value) {
-      if (!form || typeof form.mutate !== 'function') return
+      if (!form || typeof form.mutate !== 'function') return Promise.resolve(false)
       try {
-        form.mutate([{ op: 'set', path, value }])
-      } catch {}
+        return Promise.resolve(form.mutate([{ op: 'set', path, value }])).then((ok) => ok !== false, () => false)
+      } catch {
+        return Promise.resolve(false)
+      }
     }
 
     /* ---------------- 纯数据 ---------------- */
@@ -410,8 +414,11 @@ window.__ModuleLoader__.load({
               checked: enabled,
               onChange: (event) => {
                 if (!guard()) return
-                setKey(live, 'enabled', event.target.checked)
-                rerender()
+                const wanted = event.target.checked
+                setKey(live, 'enabled', wanted).then((ok) => {
+                  if (!ok) flash('没写进去：配置可能是只读的，看下当前模式')
+                  rerender()
+                })
               },
             }),
             enabled ? '注入中' : '已停用',
